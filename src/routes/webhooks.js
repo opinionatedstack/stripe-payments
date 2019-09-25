@@ -2,8 +2,9 @@ var express = require('express');
 var router = express.Router();
 const webhooksObj = require ('./../objects/webhooks');
 
-router.post('/webhook/', async (req, res, next) => {
-    webhooksObj.webhook(req)
+
+router.post('/handleWebhook/', async (req, res, next) => {
+    webhooksObj.handleWebhook(req)
         .then(function(result) {
             res.json(result);
         })
