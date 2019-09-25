@@ -1,142 +1,199 @@
-const elasticsearch = require('elasticsearch');
 const stripe = require('stripe')(process.env.STRIPE_KEY);
 
+/*
+const elasticsearch = require('elasticsearch');
 const zcAdminClient = new elasticsearch.Client({
     host: process.env.ESCONN_ADMIN_STRING,
     log: 'error'
 });
+*/
+
+const mongoDb = require ('./paymentsMongoDb');
+const ObjectID = require('mongodb').ObjectID;
+
 
 module.exports = {
-    webhook: (req) => {
+
+    logWebhook: (webhookEvent) => {
         return new Promise ( async (resolve, reject ) => {
+            try {
+                console.log(webhookEvent.type);
 
-            console.log(req.body.type);
-            const webhook = req.body;
-            webhook.createDate = new Date();
-            const webhookIndexResult = await zcAdminClient.index ( {
-                index: process.env.STRIPE_WEBHOOK_INDEX,
-                body: webhook
-            });
+                const mongoDbResult = await mongoDb.db.collection(process.env.STRIPE_WEBHOOK_INDEX).updateOne({_id: webhookEvent.id}, { $set: webhookEvent }, { upsert: true });
 
-            var webhookDataObject = webhook.data.object;
-            webhookDataObject.createDate = webhook.createDate;
+                return resolve(mongoDbResult);
+            }
+            catch (e) {
+                return reject( e );
+            }
+        });
+    },
 
-            switch (webhook.type) {
-                case 'customer.subscription.created':
+    handleWebhook: (req) => {
+        return new Promise ( async (resolve, reject ) => {
+            try {
+                // check signing by Stripe, throw error if failure
+                let webhookEvent = stripe.webhooks.constructEvent(req.body, req.headers['stripe-signature'], process.env.STRIPE_WEBHOOK_SIGNING_KEY);
 
-                    const sub = await zcAdminClient.index ( {
-                        index: process.env.STRIPE_SUBSCRIPTION_INDEX,
-                        id: webhookDataObject.id,
-                        body: webhookDataObject,
-                        refresh: true
-                    });
+                webhookEvent.createDate = new Date();
+                module.exports.logWebhook (webhookEvent);
 
-                    break;
-                case 'checkout.session.completed':
+                switch (webhookEvent.type) {
+                    case 'checkout.session.completed':
+                        await module.exports.checkoutSessionCompleted(webhookEvent);
+                        break;
+                    case 'invoice.payment_succeeded':
+                        await module.exports.invoicePaymentSucceeded(webhookEvent);
+                        break;
+                    case 'customer.subscription.created':
+                        console.log('Not yet processed', webhookEvent.type);
+                        break;
+                    case 'order.payment_succeeded':
+                        console.log('Not yet processed', webhookEvent.type);
+                        break;
+                    default:
+                        console.error('Unhandled Webhook', webhookEvent.type);
+                        break;
+                }
+                return resolve({});
+            }
+            catch (err) {
+                return reject (err);
+            }
+        });
+    },
 
-                    const sessionUpdate = await zcAdminClient.update ( {
-                        index: process.env.STRIPE_SESSION_INDEX,
-                        id: webhookDataObject.id,
-                        retry_on_conflict: 5,
-                        body: {
-                            script : {
-                                source: 'ctx._source.paymentReferenceId = params.paymentReferenceId;' +
-                                    'ctx._source.env = params.env;' +
-                                    'ctx._source.session.subscription = params.subscription;' +
-                                    'ctx._source.session.customer = params.customer;' +
-                                    'ctx._source.checkoutSessionCompletedWebhookInfo= params.WHInfo',
-                                lang: 'painless',
-                                params: {
-                                    paymentReferenceId: paymentReferenceId,
-                                    env: env,
-                                    WHInfo: webhookDataObject.webhookInfo,
-                                    subscription: webhookDataObject.subscription,
-                                    customer: webhookDataObject.customer
-                                }
-                            }
-                        }
-                    });
+    invoicePaymentSucceeded: (webhookEvent) => {
+        return new Promise ( async (resolve, reject ) => {
+            try {
+                const mdbSessionUpdate = await mongoDb.db.collection(process.env.STRIPE_PAYMENT_INDEX).insertOne(webhookEvent.data.object);
 
-                    const query = {
-                        query: {
-                            match: {
-                                paymentReferenceId: paymentReferenceId
-                            }
-                        }
-                    };
+                return resolve ({});
 
-                    const preUpdatePaymentSetups = await zcAdminClient.search ( {
-                        index: process.env.STRIPE_PURCHASE_REQUEST_INDEX,
-                        body: query
-                    });
-                    const perUpdatePaymentSetup = preUpdatePaymentSetups.hits.hits[0];
+                /*
+                var webhookDataObject = webhook.data.object;
+                webhookDataObject.createDate = webhook.createDate;
 
-                    const queryUpdate = {
-                        query: {
-                            match: {
-                                paymentReferenceId: paymentReferenceId
-                            }
-                        },
-                        script: {
-                            source: 'ctx._source.stripeSubscriptionId=params.subscription;' +
-                                'ctx._source.stripeCustomerId=params.customer',
-                            lang: "painless",
-                            params: {
-                                subscription: webhookDataObject.subscription,
-                                customer: webhookDataObject.customer
-                            }
-                        }
-                    };
+                await delay(3000);
 
-                    const resultUpdateByQuery = await zcAdminClient.updateByQuery ( {
-                        index: process.env.STRIPE_PURCHASE_REQUEST_INDEX,
-                        wait_for_completion: true,
-                        body: query
-                    });
+                const pob = {
+                    index: process.env.PURCHASE_INDEX,
+                    body: {
+                        query: {match: { stripeSubscriptionId: webhookDataObject.subscription }}
+                    }
+                };
+                const paymentSetups = await zcAdminClient.search (pob);
 
-                    return resolve (resultUpdateByQuery);
+                const paymentSetup = paymentSetups.hits.hits[0];
 
-                    break;
-                case 'invoice.payment_succeeded':
 
-                    await delay(3000);
+                const b = {
+                    createDate: new Date(),
+                    stripeSubscriptionId: webhookDataObject.subscription,
+                    stripeCustomerId: webhookDataObject.customer,
+                    stripeId: webhookDataObject.id,
+                    amount: webhookDataObject.amount_paid / 100,
+                    tax: webhookDataObject.tax ? webhookDataObject.tax/100: 0,
+                    total: webhookDataObject.total/100,
+                    pc_stripe_webhook_id: webhook._id,
+                    pc_payment_setup_id: paymentSetup._id,
+                    period_start: new Date(webhookDataObject.lines.data[0].period.start * 1000),
+                    period_end: new Date(webhookDataObject.lines.data[0].period.end * 1000),
+                    payment_type: 'credit-card',
+                    payment_provider: 'stripe'
+                };
 
-                    const pob = {
-                        index: process.env.STRIPE_PURCHASE_REQUEST_INDEX,
-                        body: {
-                            query: {match: { stripeSubscriptionId: webhookDataObject.subscription }}
-                        }
-                    };
-                    const paymentSetups = await zcAdminClient.search (pob);
+                const pcPayment = await zcAdminClient.index ( {
+                    index: 'pc-payment',
+                    body: b
+                });
 
-                    const paymentSetup = paymentSetups.hits.hits[0];
+                return resolve({});
 
-                    const b = {
-                        createDate: new Date(),
-                        stripeSubscriptionId: webhookDataObject.subscription,
-                        stripeCustomerId: webhookDataObject.customer,
-                        stripeId: webhookDataObject.id,
-                        amount: webhookDataObject.amount_paid / 100,
-                        tax: webhookDataObject.tax ? webhookDataObject.tax/100: 0,
-                        total: webhookDataObject.total/100,
-                        pc_stripe_webhook_id: webhook._id,
-                        pc_payment_setup_id: paymentSetup._id,
-                        period_start: new Date(webhookDataObject.lines.data[0].period.start * 1000),
-                        period_end: new Date(webhookDataObject.lines.data[0].period.end * 1000),
-                        payment_type: 'credit-card',
-                        payment_provider: 'stripe'
-                    };
+                */
+            }
+            catch (err) {
+                return reject (err);
+            }
+        });
+    },
 
-                    const pcPayment = await zcAdminClient.index ( {
-                        index: 'pc-payment',
-                        body: b
-                    });
+    checkoutSessionCompleted: (webhookEvent) => {
+        return new Promise ( async (resolve, reject) => {
+            try {
 
-                    return resolve({});
+                const updateObject = {
+                    completed: true,
+                    stripeCustomerId: webhookEvent.data.object.customer
+                };
 
-                    break;
+                if ('subscription' in webhookEvent.data.object) { updateObject.stripeSubscriptionId = webhookEvent.data.object.subscription; }
+
+                const mdbSession = await mongoDb.db.collection(process.env.STRIPE_SESSION_INDEX).findOne({ _id: webhookEvent.data.object.id });
+
+                if (!mdbSession) { throw Error('Webhook checkoutSessionCompleted session id not found'); }
+
+                mdbSession.completed=true;
+                mdbSession.stripeCustomerId = webhookEvent.data.object.customer;
+
+                const mdbSessionUpdate = await mongoDb.db.collection(process.env.STRIPE_SESSION_INDEX).updateOne({ _id: webhookEvent.data.object.id }, {
+                    $set: updateObject
+                });
+
+                const purchaseRequestUpdate = await mongoDb.db.collection(process.env.PURCHASE_INDEX).updateOne({ _id: mdbSession.purchaseRequestId }, {
+                    $set: updateObject
+                });
+
+                return resolve ({});
+            }
+            catch (err) {
+                return reject (err);
+            }
+        });
+    },
+
+    customerSubscriptionCreated: (req) => {
+        return new Promise ( async (resolve, reject) => {
+            try {
+                module.exports.logWebhook (req);
+
+                const webhook = req.body;
+                webhook.createDate = new Date();
+
+                return resolve ({});
+
+                /*
+                const sub = await zcAdminClient.index ( {
+                    index: process.env.STRIPE_SUBSCRIPTION_INDEX,
+                    id: webhookDataObject.id,
+                    body: webhookDataObject,
+                    refresh: true
+                });
+                */
+            }
+            catch (err) {
+                return reject (err);
             }
 
+
+        });
+    },
+
+    orderPaymentSucceeded: (req) => {
+        return new Promise ( async (resolve, reject ) => {
+            try {
+                module.exports.logWebhook (req);
+
+                const webhook = req.body;
+                webhook.createDate = new Date();
+
+                //const mdbSessionUpdate = await mongoDb.db.collection(process.env.STRIPE_PAYMENT_INDEX).insertOne(webhook.data.object);
+
+                return resolve ({});
+            }
+            catch (err) {
+                return reject (err);
+            }
         });
     }
 };

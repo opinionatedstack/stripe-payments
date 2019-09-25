@@ -1,10 +1,15 @@
 const elasticsearch = require('elasticsearch');
 const stripe = require('stripe')(process.env.STRIPE_KEY);
 
+/*
 const zcAdminClient = new elasticsearch.Client({
     host: process.env.ESCONN_ADMIN_STRING,
     log: 'error'
 });
+*/
+
+const mongoDb = require ('./paymentsMongoDb');
+const ObjectID = require('mongodb').ObjectID;
 
 module.exports = {
     createSession: async (req) => {
@@ -17,18 +22,17 @@ module.exports = {
                     cancel_url: process.env.STRIPE_CANCEL_URL
                 };
 
-
                 // Shape of checkout session is different for subscriptions vs. products
                 // This following code requires the purchase to be either one-off or subscription,
                 // NO MIXING OF THE TWO PURCHASE TYPES.
-                switch (req.body._source.purchaseData.purchaseType) {
+                switch (req.body.purchaseData.purchaseType) {
                     case 'subscription':
                         checkoutOptions.subscription_data = {
-                            items: req.body._source.purchaseData.productData
+                            items: req.body.purchaseData.productData
                         };
                         break;
                     case 'product':
-                        checkoutOptions.line_items = req.body._source.purchaseData.productData
+                        checkoutOptions.line_items = req.body.purchaseData.productData;
                         break;
                     default:
                         reject( new Error('No purchaseType'));
@@ -37,7 +41,17 @@ module.exports = {
 
                 const session = await stripe.checkout.sessions.create(checkoutOptions);
 
-                zcAdminClient.index ( {
+                const mongoDbResult = await mongoDb.db.collection(process.env.STRIPE_SESSION_INDEX).insertOne(
+                    {
+                        _id: session.id,
+                        session: session,
+                        purchaseRequestId: new ObjectID(req.body._id),
+                        env: process.env.NODE_INSTANCE,
+                        createDate: new Date()
+                    }
+                );
+/*
+                const elasticsearchResult = await zcAdminClient.index ( {
                     index: process.env.STRIPE_SESSION_INDEX,
                     body: {
                         session: session,
@@ -46,16 +60,12 @@ module.exports = {
                         createDate: new Date()
                     },
                     id: session.id
-                })
-                    .then(
-                        r => {
-                            return resolve(session);
-                        },
-                        e => {
-                            return reject (e);
-                        });
+                });
+*/
+                return resolve (session);
             }
             catch (e) {
+                console.log(e);
                 return reject (e);
             }
         });
@@ -157,25 +167,61 @@ module.exports = {
     },
 
     savePurchaseRequest: (req) => {
-        return new Promise ( (resolve, reject) => {
-            const options = {
-                index: process.env.STRIPE_PURCHASE_REQUEST_INDEX,
-                body: req.body._source
+        return new Promise ( async (resolve, reject) => {
+            try {
+                /*
+                // ES Code
+
+                onst options = {
+                    index: process.env.PURCHASE_INDEX,
+                    body: req.body._source
+                };
+
+                // With this check, this code can create and update
+                if ('_id' in req.body) {
+                    options.id = req.body._id;
+                }
+
+                const esR = await zcAdminClient.index ( options );
+
+                req.body._source._id = esR._id;
+                 */
+
+                // MongoDb Code
+                const mdbR = await mongoDb.db.collection(process.env.PURCHASE_INDEX).insertOne (req.body);
+
+                return resolve(req.body);
+            }
+            catch (e) {
+                return reject (e);
+            }
+        });
+    },
+
+    sessionCancelled: (req) => {
+        return new Promise ( async (resolve, reject) => {
+            const mdbSession = await mongoDb.db.collection(process.env.STRIPE_SESSION_INDEX).findOne({ _id: req.body.sessionId });
+
+            if (!mdbSession) { throw Error('Webhook checkoutSessionCompleted session id not found'); }
+
+            const updateObject = {
+                completed: false,
+                cancelled: true
             };
 
-            // With this check, this code can create and update
-            if ('_id' in req.body) {
-                options.id = req.body._id;
+            if ('sessionCancelledReason' in req.body) {
+                updateObject.sessionCancelledReason = req.body.sessionCancelledReason;
             }
 
-            zcAdminClient.index ( options )
-                .then(
-                    r => {
-                        return resolve(r);
-                        },
-                    e => {
-                        return reject (e);
-                    });
+            const mdbSessionUpdate = await mongoDb.db.collection(process.env.STRIPE_SESSION_INDEX).updateOne({ _id: req.body.sessionId }, {
+                $set: updateObject
+            });
+
+            const purchaseRequestUpdate = await mongoDb.db.collection(process.env.PURCHASE_INDEX).updateOne({ _id: mdbSession.purchaseRequestId }, {
+                $set: updateObject
+            });
+
+            return resolve ({});
         });
     }
 };
