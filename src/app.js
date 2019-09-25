@@ -16,8 +16,8 @@ var debug = require('debug')('pronto-stack:server');
 const app = express();
 
 app.use(helmet());
-app.use(bodyParser.json({ limit: '50mb'}));
-app.use(bodyParser.urlencoded({ extended: false })); // I saw this as true in https://www.robinwieruch.de/node-express-server-rest-api/
+//app.use(bodyParser.json({ limit: '50mb'}));
+//app.use(bodyParser.urlencoded({ extended: false })); // I saw this as true in https://www.robinwieruch.de/node-express-server-rest-api/
 app.use(cookieParser());
 app.use(compression());
 
@@ -45,8 +45,14 @@ var jwtCheck = jwt({
 const webhooks = require ('./routes/webhooks');
 const webendpoints = require ('./routes/webendpoints');
 
-app.use('/stripe/webhooks', webhooks);
-app.use('/stripe/webendpoints', jwtCheck, webendpoints);
+// Webhook Stripe validation requires raw buffer
+const rawBodyParser = bodyParser.raw({type: '*/*'});
+app.use('/stripe/webhooks', rawBodyParser, webhooks);
+
+// Traditional website calls work with JSON
+const jsonBodyParser = bodyParser.json({ limit: '50mb'});
+const urlencodedBodyParser = bodyParser.urlencoded({ extended: false });
+app.use('/stripe/webendpoints', jsonBodyParser, urlencodedBodyParser, jwtCheck, webendpoints);
 
 // catch 404 and forward to error handler
 app.use(function(req, res, next) {
