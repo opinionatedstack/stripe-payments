@@ -1,5 +1,6 @@
 const elasticsearch = require('elasticsearch');
 const stripe = require('stripe')(process.env.STRIPE_KEY);
+const asyncPackage = require ('async');
 
 /*
 const zcAdminClient = new elasticsearch.Client({
@@ -245,7 +246,7 @@ module.exports = {
             } catch (e) {
                 return reject (e);
             }
-        })
+        });
     },
 
     getPlanById: (req) => {
@@ -256,7 +257,7 @@ module.exports = {
             } catch (e) {
                 return reject (e);
             }
-        })
+        });
     },
 
     getProductById: (req) => {
@@ -267,7 +268,7 @@ module.exports = {
             } catch (e) {
                 return reject (e);
             }
-        })
+        });
     },
 
     getCustomerById: (req) => {
@@ -279,7 +280,7 @@ module.exports = {
             } catch (e) {
                 return reject (e);
             }
-        })
+        });
     },
 
     getSubscriptionsByCustomerId: (req) => {
@@ -300,7 +301,7 @@ module.exports = {
             } catch (e) {
                 return reject (e);
             }
-        })
+        });
     },
 
     getInvoiceList: (req) => {
@@ -320,18 +321,57 @@ module.exports = {
             } catch (e) {
                 return reject (e);
             }
-        })
+        });
     },
 
     cancelSubscription: (req) => {
         return new Promise ( async (resolve, reject ) => {
             try {
-                const data = await stripe.subscriptions.del( req.body.stripeSubscriptionId);
+                const data = await stripe.subscriptions.del( req.body.stripeSubscriptionId );
                 return resolve (data);
             } catch (e) {
                 return reject (e);
             }
-        })
+        });
+    },
+
+    getBillingProductsPlans: (req) => {
+        // This returns only active billing products with active plans
+        return new Promise ( async (resolve, reject) => {
+            try {
+                const params = { limit: req.body.size };
+
+                const data = await stripe.products.list( params );
+
+                const pricingPlanParams = { limit: 100 };
+
+                asyncPackage.mapLimit(data.data, 1, async product => { // <- no callback!
+                    const pricingPlanParams = {
+                        limit: 100, // if you have more than this, this needs rethinking. For now, UI forsees two or three plans
+                        product: product.id
+                    };
+
+                    if (product.type === 'good') {
+                        return product;
+                    }
+                    else {
+                        const plans = await stripe.plans.list(pricingPlanParams);
+                        product.plans = plans.data;
+                        return product;
+                    }
+                }, (err, contents) => {
+                    if (err) throw err;
+
+                    const productsWithPlans = contents.filter( products => {
+                        if (!('plans' in products)) { return false; }
+                        return (products.plans.length > 0);
+                    });
+                    return resolve (productsWithPlans);
+                });
+            } catch (e) {
+                return reject (e);
+            }
+        });
     }
 
 };

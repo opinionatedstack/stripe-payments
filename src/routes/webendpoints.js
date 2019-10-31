@@ -167,4 +167,15 @@ router.post('/cancelSubscription/', async (req, res, next) => {
         });
 });
 
+router.post('/getBillingProductsPlans/', async (req, res, next) => {
+    webendpointsObj.getBillingProductsPlans(req)
+        .then(function(result) {
+            res.json(result);
+        })
+        .catch(function (error) {
+            if (!('statusCode' in error)) { error.statusCode = 500; }
+            res.status(error.statusCode).json(error);
+        });
+});
+
 module.exports = router;
