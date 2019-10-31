@@ -17,7 +17,8 @@ module.exports = {
             try{
                 const checkoutOptions = {
                     payment_method_types: ['card'],
-                    client_reference_id: req.body._id,
+                    client_reference_id: req.body.auth0UserSub,
+                    customer: req.body.stripe_customer_id,
                     success_url: process.env.STRIPE_SUCCESS_URL,
                     cancel_url: process.env.STRIPE_CANCEL_URL
                 };
@@ -45,24 +46,13 @@ module.exports = {
                     {
                         _id: session.id,
                         session: session,
-                        purchaseRequestId: new ObjectID(req.body._id),
                         env: process.env.NODE_INSTANCE,
-                        createDate: new Date()
+                        createDate: new Date(),
+                        ... req.body
                     }
                 );
-/*
-                const elasticsearchResult = await zcAdminClient.index ( {
-                    index: process.env.STRIPE_SESSION_INDEX,
-                    body: {
-                        session: session,
-                        purchaseRequestId: req.body._id,
-                        env: process.env.NODE_INSTANCE,
-                        createDate: new Date()
-                    },
-                    id: session.id
-                });
-*/
-                return resolve (session);
+
+                return resolve (mongoDbResult.ops[0]);
             }
             catch (e) {
                 console.log(e);
@@ -127,72 +117,27 @@ module.exports = {
     },
 
     getSession: (req) => {
-        return new Promise ( (resolve, reject) => {
-            zcAdminClient.get ( {
-                index: 'pc-stripe-session',
-                type: '_doc',
-                id: req.body.sessionId
-            })
-                .then(
-                    r => {
-                        return resolve(r);
-                    },
-                    e => {
-                        return reject (e);
-                    });
+        return new Promise ( async (resolve, reject) => {
+            try {
+                const mdbR = await mongoDb.db.collection(process.env.STRIPE_SESSION_INDEX).find({ _id: req.body.sessionId }).toArray();
+
+                return resolve (mdbR);
+            } catch (e) {
+                return reject (e);
+            }
         });
     },
 
     getPayments: (req) => {
-        return new Promise ( (resolve, reject) => {
-            const query = {
-                query: {
-                    match: { pc_payment_setup_id: req.body.paymentReferenceId}
-                }
-            };
-
-            zcAdminClient.search ( {
-                index: 'pc-payment',
-                type: '_doc',
-                body: query
-            })
-                .then(
-                    r => {
-                        return resolve(r);
-                    },
-                    e => {
-                        return reject (e);
-                    });
-        });
-    },
-
-    savePurchaseRequest: (req) => {
         return new Promise ( async (resolve, reject) => {
             try {
-                /*
-                // ES Code
+                const searchCriteria = { completed: true };
+                if ('user_id' in req.body) { searchCriteria.auth0UserSub = req.body.user_id; }
 
-                onst options = {
-                    index: process.env.PURCHASE_INDEX,
-                    body: req.body._source
-                };
+                const mdbR = await mongoDb.db.collection(process.env.PURCHASE_INDEX).find(searchCriteria).toArray();
 
-                // With this check, this code can create and update
-                if ('_id' in req.body) {
-                    options.id = req.body._id;
-                }
-
-                const esR = await zcAdminClient.index ( options );
-
-                req.body._source._id = esR._id;
-                 */
-
-                // MongoDb Code
-                const mdbR = await mongoDb.db.collection(process.env.PURCHASE_INDEX).insertOne (req.body);
-
-                return resolve(req.body);
-            }
-            catch (e) {
+                return resolve (mdbR);
+            } catch (e) {
                 return reject (e);
             }
         });
@@ -223,7 +168,172 @@ module.exports = {
 
             return resolve ({});
         });
+    },
+
+    sessionCompleted: (req) => {
+        return new Promise ( async (resolve, reject) => {
+            const mdbSession = await mongoDb.db.collection(process.env.STRIPE_SESSION_INDEX).findOne({ _id: req.body.sessionId });
+
+            if (!mdbSession) { throw Error('Webhook checkoutSessionCompleted session id not found'); }
+
+            const updateObject = {
+                completed: true
+            };
+
+            if ('sessionCancelledReason' in req.body) {
+                updateObject.sessionCancelledReason = req.body.sessionCancelledReason;
+            }
+
+            const mdbSessionUpdate = await mongoDb.db.collection(process.env.STRIPE_SESSION_INDEX).updateOne({ _id: req.body.sessionId }, {
+                $set: updateObject
+            });
+
+            const purchaseRequestUpdate = await mongoDb.db.collection(process.env.PURCHASE_INDEX).updateOne({ _id: mdbSession.purchaseRequestId }, {
+                $set: updateObject
+            });
+
+            return resolve ({});
+        });
+    },
+
+    getCompletedSessionsByAuth0UserId: (req) => {
+        return new Promise ( async (resolve, reject) => {
+            try {
+                const resultsObj = await mongoDb.db.collection(process.env.STRIPE_SESSION_INDEX).find({
+                    auth0UserSub: req.body.user_id,
+                    completed: true
+                })
+                    .skip(req.body.from)
+                    .limit(req.body.size)
+                    .sort({createDate: -1}); // -1 = descending, 1 = ascending
+
+                const resultsArray = [resultsObj.count(), resultsObj.toArray()];
+                const promiseResults = await Promise.all(resultsArray);
+
+                return resolve ({ total: promiseResults[0], records: promiseResults[1] });
+            } catch (e) {
+                return reject (e);
+            }
+        });
+    },
+
+    getPaymentsBySubscriptionId: (req) => {
+        return new Promise ( async (resolve, reject) => {
+            try {
+                const resultsObj = await mongoDb.db.collection(process.env.STRIPE_PAYMENT_INDEX).find({
+                    subscription: req.body.subscriptionId
+                })
+                    .skip(req.body.from)
+                    .limit(req.body.size)
+                    .sort({createDate: -1});
+
+                const resultsArray = [resultsObj.count(), resultsObj.toArray()];
+                const promiseResults = await Promise.all(resultsArray);
+
+                return resolve ({ total: promiseResults[0], records: promiseResults[1] });
+            } catch (e) {
+                return reject (e);
+            }
+        });
+    },
+
+    getSubscriptionById: (req) => {
+        return new Promise ( async (resolve, reject ) => {
+            try {
+                const data = await stripe.subscriptions.retrieve( req.body.stripeSubscriptionId);
+                return resolve (data);
+            } catch (e) {
+                return reject (e);
+            }
+        })
+    },
+
+    getPlanById: (req) => {
+        return new Promise ( async (resolve, reject ) => {
+            try {
+                const data = await stripe.plans.retrieve( req.body.planId);
+                return resolve (data);
+            } catch (e) {
+                return reject (e);
+            }
+        })
+    },
+
+    getProductById: (req) => {
+        return new Promise ( async (resolve, reject ) => {
+            try {
+                const data = await stripe.products.retrieve( req.body.productId);
+                return resolve (data);
+            } catch (e) {
+                return reject (e);
+            }
+        })
+    },
+
+    getCustomerById: (req) => {
+        return new Promise ( async (resolve, reject ) => {
+            try {
+                console.log(req.body.stripeCustomerId);
+                const data = await stripe.customers.retrieve( req.body.stripeCustomerId);
+                return resolve (data);
+            } catch (e) {
+                return reject (e);
+            }
+        })
+    },
+
+    getSubscriptionsByCustomerId: (req) => {
+        return new Promise ( async (resolve, reject ) => {
+            try {
+                const params = {
+                    customer: req.body.stripeCustomerId,
+                    limit: req.body.size,
+                    status: 'all'
+                };
+
+                // Pagination at Stripe is based on objectIDs, not counts.
+                // Therefore it cannot be passed in on the first page.
+                if ('starting_after' in req.body ) { params.starting_after = req.body.starting_after; }
+
+                const data = await stripe.subscriptions.list( params );
+                return resolve (data);
+            } catch (e) {
+                return reject (e);
+            }
+        })
+    },
+
+    getInvoiceList: (req) => {
+        return new Promise ( async (resolve, reject ) => {
+            try {
+                const params = { limit: req.body.size };
+
+                // Pagination at Stripe is based on objectIDs, not counts.
+                // Therefore it cannot be passed in on the first page.
+                if ('starting_after' in req.body ) { params.starting_after = req.body.starting_after; }
+
+                if ('stripeCustomerId' in req.body) { params.customer = req.body.stripeCustomerId; }
+                if ('stripeSubscriptionId' in req.body) { params.subscription = req.body.stripeSubscriptionId; }
+
+                const data = await stripe.invoices.list( params );
+                return resolve (data);
+            } catch (e) {
+                return reject (e);
+            }
+        })
+    },
+
+    cancelSubscription: (req) => {
+        return new Promise ( async (resolve, reject ) => {
+            try {
+                const data = await stripe.subscriptions.del( req.body.stripeSubscriptionId);
+                return resolve (data);
+            } catch (e) {
+                return reject (e);
+            }
+        })
     }
+
 };
 
 const delay = (ms) => {
