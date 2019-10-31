@@ -11,19 +11,16 @@ const compression = require('compression');
 const logger = require('morgan');
 const path = require('path');
 const createError = require('http-errors');
-var debug = require('debug')('pronto-stack:server');
+const debug = require('debug')('pronto-stack:server');
 
 const app = express();
 
 app.use(helmet());
-//app.use(bodyParser.json({ limit: '50mb'}));
-//app.use(bodyParser.urlencoded({ extended: false })); // I saw this as true in https://www.robinwieruch.de/node-express-server-rest-api/
 app.use(cookieParser());
 app.use(compression());
 
 app.use(logger('dev'));
 
-//fuck, was working, removed after getting "Access-Control-Allow-Origin header contains multiple values '*, *', but only one is allowed"
 app.use(cors());
 app.options('*', cors());
 
@@ -47,12 +44,12 @@ const webendpoints = require ('./routes/webendpoints');
 
 // Webhook Stripe validation requires raw buffer
 const rawBodyParser = bodyParser.raw({type: '*/*'});
-app.use('/stripe/webhooks', rawBodyParser, webhooks);
+app.use('/payments/webhooks', rawBodyParser, webhooks);
 
 // Traditional website calls work with JSON
 const jsonBodyParser = bodyParser.json({ limit: '50mb'});
 const urlencodedBodyParser = bodyParser.urlencoded({ extended: false });
-app.use('/stripe/webendpoints', jsonBodyParser, urlencodedBodyParser, jwtCheck, webendpoints);
+app.use('/payments/webendpoints', jsonBodyParser, urlencodedBodyParser, jwtCheck, webendpoints);
 
 // catch 404 and forward to error handler
 app.use(function(req, res, next) {
@@ -78,14 +75,6 @@ const server = app.listen(parseInt(process.env.REST_SERVER_PORT), () => {
 
 server.on('error', onError);
 server.on('listening', onListening);
-
-
-//var server = require('http').Server(app);
-//var io = require('socket.io')(server);
-//var wcSocket = require('./objects/wc-socket').socketServer(io);
-
-
-
 
 function onError(error) {
     if (error.syscall !== 'listen') {
