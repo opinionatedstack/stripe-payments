@@ -10,6 +10,7 @@ const zcAdminClient = new elasticsearch.Client({
 
 const mongoDb = require ('./paymentsMongoDb');
 const ObjectID = require('mongodb').ObjectID;
+const auth0 = require ('./auth0');
 
 
 module.exports = {
@@ -122,6 +123,9 @@ module.exports = {
         return new Promise ( async (resolve, reject) => {
             try {
 
+                const auth0_sub_id = webhookEvent.data.object.client_reference_id;
+                const stripe_customer_id = webhookEvent.data.object.customer;
+
                 const updateObject = {
                     completed: true,
                     stripeCustomerId: webhookEvent.data.object.customer
@@ -140,9 +144,13 @@ module.exports = {
                     $set: updateObject
                 });
 
+                /*
                 const purchaseRequestUpdate = await mongoDb.db.collection(process.env.PURCHASE_INDEX).updateOne({ _id: mdbSession.purchaseRequestId }, {
                     $set: updateObject
                 });
+                 */
+
+                const auth0UserUpdateResult = await auth0.setUsersStripeCustomerId({ auth0_sub_id: auth0_sub_id, stripe_customer_id: stripe_customer_id } );
 
                 return resolve ({});
             }
@@ -161,21 +169,10 @@ module.exports = {
                 webhook.createDate = new Date();
 
                 return resolve ({});
-
-                /*
-                const sub = await zcAdminClient.index ( {
-                    index: process.env.STRIPE_SUBSCRIPTION_INDEX,
-                    id: webhookDataObject.id,
-                    body: webhookDataObject,
-                    refresh: true
-                });
-                */
             }
             catch (err) {
                 return reject (err);
             }
-
-
         });
     },
 
