@@ -24,28 +24,6 @@ router.post('/getSession/', async (req, res, next) => {
         });
 });
 
-router.post('/getStripeSubscriptions/', async (req, res, next) => {
-    webendpointsObj.getStripeSubscriptions(req)
-        .then(function(result) {
-            res.json(result);
-        })
-        .catch(function (error) {
-            if (!('statusCode' in error)) { error.statusCode = 500; }
-            res.status(error.statusCode).json(error);
-        });
-});
-
-router.post('/getSubcriptionPaymentHistory/', async (req, res, next) => {
-    webendpointsObj.getSubcriptionPaymentHistory(req)
-        .then(function(result) {
-            res.json(result);
-        })
-        .catch(function (error) {
-            if (!('statusCode' in error)) { error.statusCode = 500; }
-            res.status(error.statusCode).json(error);
-        });
-});
-
 router.post('/getCompletedSessionsByAuth0UserId/', async (req, res, next) => {
     webendpointsObj.getCompletedSessionsByAuth0UserId(req)
         .then(function(result) {

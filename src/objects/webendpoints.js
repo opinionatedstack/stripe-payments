@@ -62,61 +62,6 @@ module.exports = {
         });
     },
 
-    getStripeSubscriptions: (req) => {
-        return new Promise ( (resolve, reject) => {
-            const q = {
-                query: { match: { paymentReferenceId: req.body.paymentReferenceId}},
-                sort: { createDate: 'asc' }
-            };
-            console.log(JSON.stringify(q, null, 4));
-
-            zcAdminClient.search ( {
-                index: 'pc-stripe-subscription',
-                type: '_doc',
-                body: q
-            })
-                .then(
-                    r => {
-                        console.log(req.body.paymentReferenceId, r.hits.hits.length);
-                        return resolve(r);
-                    },
-                    e => {
-                        return reject (e);
-                    });
-        });
-    },
-
-    getSubcriptionPaymentHistory: (req) => {
-        return new Promise ( (resolve, reject) => {
-            const q = {
-                query: {
-                    bool: {
-                        must: [
-                            { "term": {"subscription": req.body.subscriptionId}},
-                            { "term": {"webhookInfo.type": "invoice.payment_succeeded"}}
-                        ]
-                    }
-                },
-                sort: { createDate: 'asc' }
-            };
-            console.log(JSON.stringify(q, null, 4));
-
-            zcAdminClient.search ( {
-                index: 'pc-stripe-webhook',
-                type: '_doc',
-                body: q
-            })
-                .then(
-                    r => {
-                        console.log(req.body.paymentReferenceId, r.hits.hits.length);
-                        return resolve(r);
-                    },
-                    e => {
-                        return reject (e);
-                    });
-        });
-    },
-
     getSession: (req) => {
         return new Promise ( async (resolve, reject) => {
             try {
@@ -366,6 +311,9 @@ module.exports = {
                         if (!('plans' in products)) { return false; }
                         return (products.plans.length > 0);
                     });
+
+                    console.log (JSON.stringify(productsWithPlans, null, 4));
+
                     return resolve (productsWithPlans);
                 });
             } catch (e) {
