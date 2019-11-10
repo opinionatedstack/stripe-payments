@@ -31,6 +31,26 @@ module.exports = {
         });
     },
 
+    searchUser: (params) => {
+        return new Promise ( async ( resolve, reject ) => {
+            const token = await getTokenTMAuth0MgmtAPI();
+
+            var options = { method: 'GET',
+                url: process.env.AUTH0_DOMAIN + '/api/v2/users',
+                qs:  {q: params.search_field + ':"' + params.search_value + '"', search_engine: 'v3'},
+                headers: { authorization: 'Bearer ' + token.access_token }
+            };
+
+            request(options, function (error, response, body) {
+                if (error) { return reject(error); }
+
+                if (body.statusCode && body.statusCode != 200) { return reject(body); }
+
+                return resolve(body);
+            });
+        });
+    },
+
     setUsersStripeCustomerId: (params) => {
         return new Promise ( async (resolve, reject) => {
             try {
@@ -40,20 +60,13 @@ module.exports = {
 
                 const token = await getTokenTMAuth0MgmtAPI();
 
-                let stripeCustomerIds = [];
                 if (user.app_metadata) {
-                    if (user.app_metadata.stripe_customer_ids) {
-                        stripeCustomerIds = user.app_metadata.stripe_customer_ids;
+                    if (user.app_metadata.stripe_customer_id) {
+                        console.log('Customer aready has stripe_customer_id', JSON.stringify(params));
                     }
                 }
 
-                if (stripeCustomerIds.indexOf(params.stripe_customer_id) > -1) {
-                    return resolve(user);
-                }
-
-                stripeCustomerIds.unshift(params.stripe_customer_id);
-
-                const userUpdateBody = { app_metadata: {stripe_customer_ids: stripeCustomerIds} };
+                const userUpdateBody = { app_metadata: {stripe_customer_id: params.stripe_customer_id} };
 
                 var options = { method: 'PATCH',
                     url: process.env.AUTH0_DOMAIN + '/api/v2/users/' + params.auth0_sub_id,
@@ -75,6 +88,107 @@ module.exports = {
             } catch (e) {
                 return reject (e);
             }
+        });
+    },
+
+    setUserAppMetadata: (params) => {
+        return new Promise ( async ( resolve, reject ) => {
+            try {
+                // Only top-level values of app_metadata are merged
+                // Get current value and merge manually
+                let user;
+                if ('auth0_sub_id' in params) {
+                    user = JSON.parse(await module.exports.getUser({body: { auth0_sub_id: params.auth0_sub_id }}));
+                } else {
+                    const users = JSON.parse(await module.exports.searchUser(params));
+                    if (users.length > 1) { return reject( new Error ('Too many users match criteria.')); }
+                    if (users.length < 1) { return reject( new Error ('Too few users match criteria.')); }
+                    user = users[0];
+                }
+
+                const token = await getTokenTMAuth0MgmtAPI();
+
+                console.log('user.app_metadata');
+                console.log(JSON.stringify(user.app_metadata, null, 4));
+
+                user.app_metadata[params.app_metadata_var_name] = params.app_metadata_var_value;
+
+                var options = {
+                    method: 'PATCH',
+                    url: process.env.AUTH0_DOMAIN + '/api/v2/users/' + user.user_id,
+                    body: { app_metadata: user.app_metadata },
+                    headers: {
+                        authorization: 'Bearer ' + token.access_token,
+                        'content-type': 'application/json'
+                    },
+                    json: true
+                };
+
+                request(options, function (error, response, body) {
+                    if (error) { return reject(error); }
+
+                    if (body.statusCode && body.statusCode != 200) { return reject(body); }
+
+                    return resolve(body);
+                });
+
+            } catch (e) {
+                return reject (e);
+            }
+        })
+    },
+
+    setUserRoles: (params) => {
+        return new Promise ( async (resolve, reject) => {
+            const token = await getTokenTMAuth0MgmtAPI();
+
+            var options = { method: 'POST',
+                url: process.env.AUTH0_DOMAIN + '/api/v2/users/' + params.auth0_sub_id + '/roles',
+                headers: { authorization: 'Bearer ' + token.access_token },
+                body: {
+                    roles: params.roles
+                },
+                json: true
+            };
+
+            request(options, (error, response) => {
+                if (error) { return reject(error); }
+
+                // Correct response code is 204, but accept all 200s
+                if (response.statusCode && (response.statusCode < 200 || response.statusCode >=300)) { return reject(body); }
+
+                return resolve(response);
+            });
+        });
+    },
+
+    removeUserRoles: (params) => {
+        return new Promise ( async (resolve, reject) => {
+            const token = await getTokenTMAuth0MgmtAPI();
+
+            var options = { method: 'DELETE',
+                url: process.env.AUTH0_DOMAIN + '/api/v2/users/' + params.auth0_sub_id + '/roles',
+                headers: { authorization: 'Bearer ' + token.access_token },
+                body: {
+                    roles: params.roles
+                },
+                json: true
+            };
+
+            request(options, (error, response) => {
+                if (error) { return reject(error); }
+
+                // Correct response code is 204, but accept all 200s
+                if (response.statusCode && (response.statusCode < 200 || response.statusCode >=300)) { return reject(body); }
+
+                return resolve(response);
+            });
+        });
+    },
+
+    getUserRole: (params) => {
+        return new Promise ( (resolve, reject) => {
+            return resolve({});
         });
     }
 };

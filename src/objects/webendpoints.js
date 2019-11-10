@@ -1,47 +1,33 @@
+// Infrastructure Objects
 const elasticsearch = require('elasticsearch');
 const stripe = require('stripe')(process.env.STRIPE_KEY);
 const asyncPackage = require ('async');
-
-/*
-const zcAdminClient = new elasticsearch.Client({
-    host: process.env.ESCONN_ADMIN_STRING,
-    log: 'error'
-});
-*/
-
 const mongoDb = require ('./paymentsMongoDb');
 const ObjectID = require('mongodb').ObjectID;
 
+// Project Objects
+const auth0 = require ('./auth0');
+
 module.exports = {
-    createSession: async (req) => {
+    createSession: async (params) => {
         return new Promise ( async (resolve, reject) => {
             try{
                 const checkoutOptions = {
                     payment_method_types: ['card'],
-                    client_reference_id: req.body.auth0UserSub,
-                    customer: req.body.stripe_customer_id,
+                    client_reference_id: params.auth0UserSub,
+                    customer: params.stripe_customer_id,
                     success_url: process.env.STRIPE_SUCCESS_URL,
-                    cancel_url: process.env.STRIPE_CANCEL_URL
+                    cancel_url: process.env.STRIPE_CANCEL_URL,
+                    subscription_data: {
+                        items: [ { plan: params.plan_id } ]
+                    }
                 };
 
-                // Shape of checkout session is different for subscriptions vs. products
-                // This following code requires the purchase to be either one-off or subscription,
-                // NO MIXING OF THE TWO PURCHASE TYPES.
-                switch (req.body.purchaseData.purchaseType) {
-                    case 'subscription':
-                        checkoutOptions.subscription_data = {
-                            items: req.body.purchaseData.productData
-                        };
-                        break;
-                    case 'product':
-                        checkoutOptions.line_items = req.body.purchaseData.productData;
-                        break;
-                    default:
-                        reject( new Error('No purchaseType'));
-                        break;
-                }
-
                 const session = await stripe.checkout.sessions.create(checkoutOptions);
+
+                //console.log('create.session');
+                //console.log(JSON.stringify(session, null, 4));
+
 
                 const mongoDbResult = await mongoDb.db.collection(process.env.STRIPE_SESSION_INDEX).insertOne(
                     {
@@ -49,7 +35,7 @@ module.exports = {
                         session: session,
                         env: process.env.NODE_INSTANCE,
                         createDate: new Date(),
-                        ... req.body
+                        ... params
                     }
                 );
 
@@ -62,10 +48,10 @@ module.exports = {
         });
     },
 
-    getSession: (req) => {
+    getSession: (params) => {
         return new Promise ( async (resolve, reject) => {
             try {
-                const mdbR = await mongoDb.db.collection(process.env.STRIPE_SESSION_INDEX).find({ _id: req.body.sessionId }).toArray();
+                const mdbR = await mongoDb.db.collection(process.env.STRIPE_SESSION_INDEX).find({ _id: params.sessionId }).toArray();
 
                 return resolve (mdbR);
             } catch (e) {
@@ -74,24 +60,9 @@ module.exports = {
         });
     },
 
-    getPayments: (req) => {
+    sessionCancelled: (params) => {
         return new Promise ( async (resolve, reject) => {
-            try {
-                const searchCriteria = { completed: true };
-                if ('user_id' in req.body) { searchCriteria.auth0UserSub = req.body.user_id; }
-
-                const mdbR = await mongoDb.db.collection(process.env.PURCHASE_INDEX).find(searchCriteria).toArray();
-
-                return resolve (mdbR);
-            } catch (e) {
-                return reject (e);
-            }
-        });
-    },
-
-    sessionCancelled: (req) => {
-        return new Promise ( async (resolve, reject) => {
-            const mdbSession = await mongoDb.db.collection(process.env.STRIPE_SESSION_INDEX).findOne({ _id: req.body.sessionId });
+            const mdbSession = await mongoDb.db.collection(process.env.STRIPE_SESSION_INDEX).findOne({ _id: params.sessionId });
 
             if (!mdbSession) { throw Error('Webhook checkoutSessionCompleted session id not found'); }
 
@@ -100,11 +71,11 @@ module.exports = {
                 cancelled: true
             };
 
-            if ('sessionCancelledReason' in req.body) {
-                updateObject.sessionCancelledReason = req.body.sessionCancelledReason;
+            if ('sessionCancelledReason' in params) {
+                updateObject.sessionCancelledReason = params.sessionCancelledReason;
             }
 
-            const mdbSessionUpdate = await mongoDb.db.collection(process.env.STRIPE_SESSION_INDEX).updateOne({ _id: req.body.sessionId }, {
+            const mdbSessionUpdate = await mongoDb.db.collection(process.env.STRIPE_SESSION_INDEX).updateOne({ _id: params.sessionId }, {
                 $set: updateObject
             });
 
@@ -116,9 +87,9 @@ module.exports = {
         });
     },
 
-    sessionCompleted: (req) => {
+    sessionCompleted: (params) => {
         return new Promise ( async (resolve, reject) => {
-            const mdbSession = await mongoDb.db.collection(process.env.STRIPE_SESSION_INDEX).findOne({ _id: req.body.sessionId });
+            const mdbSession = await mongoDb.db.collection(process.env.STRIPE_SESSION_INDEX).findOne({ _id: params.sessionId });
 
             if (!mdbSession) { throw Error('Webhook checkoutSessionCompleted session id not found'); }
 
@@ -126,11 +97,11 @@ module.exports = {
                 completed: true
             };
 
-            if ('sessionCancelledReason' in req.body) {
-                updateObject.sessionCancelledReason = req.body.sessionCancelledReason;
+            if ('sessionCancelledReason' in params) {
+                updateObject.sessionCancelledReason = params.sessionCancelledReason;
             }
 
-            const mdbSessionUpdate = await mongoDb.db.collection(process.env.STRIPE_SESSION_INDEX).updateOne({ _id: req.body.sessionId }, {
+            const mdbSessionUpdate = await mongoDb.db.collection(process.env.STRIPE_SESSION_INDEX).updateOne({ _id: params.sessionId }, {
                 $set: updateObject
             });
 
@@ -142,15 +113,15 @@ module.exports = {
         });
     },
 
-    getCompletedSessionsByAuth0UserId: (req) => {
+    getCompletedSessionsByAuth0UserId: (params) => {
         return new Promise ( async (resolve, reject) => {
             try {
                 const resultsObj = await mongoDb.db.collection(process.env.STRIPE_SESSION_INDEX).find({
-                    auth0UserSub: req.body.user_id,
+                    auth0UserSub: params.user_id,
                     completed: true
                 })
-                    .skip(req.body.from)
-                    .limit(req.body.size)
+                    .skip(params.from)
+                    .limit(params.size)
                     .sort({createDate: -1}); // -1 = descending, 1 = ascending
 
                 const resultsArray = [resultsObj.count(), resultsObj.toArray()];
@@ -163,14 +134,14 @@ module.exports = {
         });
     },
 
-    getPaymentsBySubscriptionId: (req) => {
+    getPaymentsBySubscriptionId: (params) => {
         return new Promise ( async (resolve, reject) => {
             try {
                 const resultsObj = await mongoDb.db.collection(process.env.STRIPE_PAYMENT_INDEX).find({
-                    subscription: req.body.subscriptionId
+                    subscription: params.subscriptionId
                 })
-                    .skip(req.body.from)
-                    .limit(req.body.size)
+                    .skip(params.from)
+                    .limit(params.size)
                     .sort({createDate: -1});
 
                 const resultsArray = [resultsObj.count(), resultsObj.toArray()];
@@ -183,10 +154,10 @@ module.exports = {
         });
     },
 
-    getSubscriptionById: (req) => {
+    getSubscriptionById: (params) => {
         return new Promise ( async (resolve, reject ) => {
             try {
-                const data = await stripe.subscriptions.retrieve( req.body.stripeSubscriptionId);
+                const data = await stripe.subscriptions.retrieve( params.stripeSubscriptionId);
                 return resolve (data);
             } catch (e) {
                 return reject (e);
@@ -194,10 +165,10 @@ module.exports = {
         });
     },
 
-    getPlanById: (req) => {
+    getPlanById: (params) => {
         return new Promise ( async (resolve, reject ) => {
             try {
-                const data = await stripe.plans.retrieve( req.body.planId);
+                const data = await stripe.plans.retrieve( params.planId);
                 return resolve (data);
             } catch (e) {
                 return reject (e);
@@ -205,10 +176,10 @@ module.exports = {
         });
     },
 
-    getProductById: (req) => {
+    getProductById: (params) => {
         return new Promise ( async (resolve, reject ) => {
             try {
-                const data = await stripe.products.retrieve( req.body.productId);
+                const data = await stripe.products.retrieve( params.productId);
                 return resolve (data);
             } catch (e) {
                 return reject (e);
@@ -216,11 +187,11 @@ module.exports = {
         });
     },
 
-    getCustomerById: (req) => {
+    getCustomerById: (params) => {
         return new Promise ( async (resolve, reject ) => {
             try {
-                console.log(req.body.stripeCustomerId);
-                const data = await stripe.customers.retrieve( req.body.stripeCustomerId);
+                console.log(params.stripeCustomerId);
+                const data = await stripe.customers.retrieve( params.stripeCustomerId);
                 return resolve (data);
             } catch (e) {
                 return reject (e);
@@ -228,20 +199,20 @@ module.exports = {
         });
     },
 
-    getSubscriptionsByCustomerId: (req) => {
+    getSubscriptionsByCustomerId: (params) => {
         return new Promise ( async (resolve, reject ) => {
             try {
-                const params = {
-                    customer: req.body.stripeCustomerId,
-                    limit: req.body.size,
-                    status: 'all'
+                const stripeParams = {
+                    customer: params.stripeCustomerId,
+                    limit: params.size,
+                    status: params.status ? params.status : 'all'
                 };
 
                 // Pagination at Stripe is based on objectIDs, not counts.
                 // Therefore it cannot be passed in on the first page.
-                if ('starting_after' in req.body ) { params.starting_after = req.body.starting_after; }
+                if ('starting_after' in params ) { params.starting_after = params.starting_after; }
 
-                const data = await stripe.subscriptions.list( params );
+                const data = await stripe.subscriptions.list( stripeParams );
                 return resolve (data);
             } catch (e) {
                 return reject (e);
@@ -249,19 +220,19 @@ module.exports = {
         });
     },
 
-    getInvoiceList: (req) => {
+    getInvoiceList: (params) => {
         return new Promise ( async (resolve, reject ) => {
             try {
-                const params = { limit: req.body.size };
+                const stripeParams = { limit: params.size };
 
                 // Pagination at Stripe is based on objectIDs, not counts.
                 // Therefore it cannot be passed in on the first page.
-                if ('starting_after' in req.body ) { params.starting_after = req.body.starting_after; }
+                if ('starting_after' in params ) { stripeParams.starting_after = params.starting_after; }
 
-                if ('stripeCustomerId' in req.body) { params.customer = req.body.stripeCustomerId; }
-                if ('stripeSubscriptionId' in req.body) { params.subscription = req.body.stripeSubscriptionId; }
+                if ('stripeCustomerId' in params) { stripeParams.customer = params.stripeCustomerId; }
+                if ('stripeSubscriptionId' in params) { stripeParams.subscription = params.stripeSubscriptionId; }
 
-                const data = await stripe.invoices.list( params );
+                const data = await stripe.invoices.list( stripeParams );
                 return resolve (data);
             } catch (e) {
                 return reject (e);
@@ -269,10 +240,10 @@ module.exports = {
         });
     },
 
-    cancelSubscription: (req) => {
+    cancelSubscription: (params) => {
         return new Promise ( async (resolve, reject ) => {
             try {
-                const data = await stripe.subscriptions.del( req.body.stripeSubscriptionId );
+                const data = await stripe.subscriptions.del( params.stripeSubscriptionId );
                 return resolve (data);
             } catch (e) {
                 return reject (e);
@@ -280,13 +251,13 @@ module.exports = {
         });
     },
 
-    getBillingProductsPlans: (req) => {
+    getBillingProductsPlans: (params) => {
         // This returns only active billing products with active plans
         return new Promise ( async (resolve, reject) => {
             try {
-                const params = { limit: req.body.size };
+                const stripeParams = { limit: params.size };
 
-                const data = await stripe.products.list( params );
+                const data = await stripe.products.list( stripeParams );
 
                 const pricingPlanParams = { limit: 100 };
 
@@ -312,7 +283,7 @@ module.exports = {
                         return (products.plans.length > 0);
                     });
 
-                    console.log (JSON.stringify(productsWithPlans, null, 4));
+                    //console.log (JSON.stringify(productsWithPlans, null, 4));
 
                     return resolve (productsWithPlans);
                 });
@@ -320,6 +291,32 @@ module.exports = {
                 return reject (e);
             }
         });
+    },
+
+    createCustomer: (params) => {
+        return new Promise ( async (resolve, reject) => {
+            try {
+                const stripeParams = {
+                    // Email used in Stripe to display and search for customers
+                    // To prevent them from becoming disaligned, save auth0UserId instead
+                    email: params.email,
+                    metadata: {
+                        auth0_user_sub: params.auth0UserSub
+                    }
+                };
+
+                const data = await stripe.customers.create( stripeParams );
+                const auth0UserUpdateResult = await auth0.setUsersStripeCustomerId({
+                    auth0_sub_id: params.auth0UserSub,
+                    stripe_customer_id: data.id
+                } );
+
+                return resolve (data);
+
+            } catch (e) {
+                return reject (e);
+            }
+        })
     }
 
 };

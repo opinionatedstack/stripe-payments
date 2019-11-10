@@ -49,7 +49,7 @@ app.use('/payments/webhooks', rawBodyParser, webhooks);
 // Traditional website calls work with JSON
 const jsonBodyParser = bodyParser.json({ limit: '50mb'});
 const urlencodedBodyParser = bodyParser.urlencoded({ extended: false });
-app.use('/payments/webendpoints', jsonBodyParser, urlencodedBodyParser, jwtCheck, webendpoints);
+app.use('/payments/webendpoints', jsonBodyParser, urlencodedBodyParser, /*jwtCheck, */webendpoints);
 
 // catch 404 and forward to error handler
 app.use(function(req, res, next) {
