@@ -1,4 +1,4 @@
 # From: https://nodejs.org/de/docs/guides/nodejs-docker-webapp/
-
+.git
 node_modules
 npm-debug.log
