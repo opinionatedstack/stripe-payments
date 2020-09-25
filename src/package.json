@@ -5,7 +5,9 @@
   "main": "app.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node ./app.js"
+    "start": "node ./app.js",
+    "bp-prod": "docker build -t opinionatedstack/stripe-payments:latest -f Dockerfile.prod . && docker push opinionatedstack/stripe-payments:latest && say done",
+    "bp-qa": "docker build -t opinionatedstack/stripe-payments:latest-qa -f Dockerfile.qa . && docker push opinionatedstack/stripe-payments:latest-qa && say done"
   },
   "author": "",
   "license": "MIT",
