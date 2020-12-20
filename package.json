@@ -2,12 +2,12 @@
   "name": "stripe-payments",
   "version": "1.0.0",
   "description": "",
-  "main": "app.js",
+  "main": "src/app.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node ./app.js",
-    "bp-prod": "docker build -t opinionatedstack/stripe-payments:latest -f Dockerfile.prod . && docker push opinionatedstack/stripe-payments:latest && say done",
-    "bp-qa": "docker build -t opinionatedstack/stripe-payments:latest-qa -f Dockerfile.qa . && docker push opinionatedstack/stripe-payments:latest-qa && say done"
+    "start": "node src/app.js",
+    "bp-prod": "docker build -t opinionatedstack/stripe-payments:latest -f Dockerfile.prod src && docker push opinionatedstack/stripe-payments:latest && say done",
+    "bp-qa": "docker build -t opinionatedstack/stripe-payments:latest-qa -f Dockerfile.qa src && docker push opinionatedstack/stripe-payments:latest-qa && say done"
   },
   "author": "",
   "license": "MIT",
@@ -24,6 +24,6 @@
     "jwks-rsa": "^1.6.2",
     "mongodb": "^3.5.3",
     "morgan": "^1.9.1",
-    "stripe": "^7.15.0"
+    "stripe": "^8.129.0"
   }
 }
