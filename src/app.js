@@ -32,7 +32,7 @@ var jwtCheck = jwt({
         cache: true,
         rateLimit: true,
         jwksRequestsPerMinute: 5,
-        jwksUri: process.env.AUTH0_DOMAIN + '/.well-known/jwks.json'
+        jwksUri: 'https://' + process.env.AUTH0_DOMAIN + '/.well-known/jwks.json'
     }),
     audience: process.env.AUDIENCE,
     issuer: process.env.ISSUER,
